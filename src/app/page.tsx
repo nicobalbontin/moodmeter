@@ -1,103 +1,270 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import { MoodGrid } from '@/components/MoodGrid';
+import { UserList } from '@/components/UserList';
+import { UserNameModal } from '@/components/UserNameModal';
+import { useMoodData } from '@/hooks/useMoodData';
+import { supabase } from '@/lib/supabase';
+import { generatePastelColor } from '@/lib/constants';
+import type { UserSession, MoodSelection } from '@/types';
+
+const STORAGE_KEY = 'moodmeter-session';
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const { moodSelections, loading, error } = useMoodData();
+  const [userSession, setUserSession] = useState<UserSession | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedMood, setSelectedMood] = useState<string>('');
+  const [optimisticSelections, setOptimisticSelections] = useState<MoodSelection[]>([]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // Merge real data with optimistic updates
+  const displayedSelections = optimisticSelections.length > 0 ? optimisticSelections : moodSelections;
+
+  // Load session from localStorage on mount
+  useEffect(() => {
+    const storedSession = localStorage.getItem(STORAGE_KEY);
+    if (storedSession) {
+      try {
+        const session = JSON.parse(storedSession) as UserSession;
+        setUserSession(session);
+      } catch (err) {
+        console.error('Error parsing stored session:', err);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  }, []);
+
+  // Clear optimistic updates when real data arrives
+  useEffect(() => {
+    if (moodSelections.length > 0) {
+      setOptimisticSelections([]);
+    }
+  }, [moodSelections]);
+
+  const handleMoodClick = (mood: string) => {
+    setSelectedMood(mood);
+
+    if (userSession) {
+      // User already has a session, update their mood
+      updateMood(mood);
+    } else {
+      // New user, open modal to get name
+      setIsModalOpen(true);
+    }
+  };
+
+  const handleNameSubmit = async (name: string) => {
+    const sessionId = crypto.randomUUID();
+    const userColor = generatePastelColor();
+
+    const newSession: UserSession = {
+      sessionId,
+      userName: name,
+      userColor,
+    };
+
+    // Save session to localStorage
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
+    setUserSession(newSession);
+
+    // Optimistic update - show immediately
+    const optimisticSelection: MoodSelection = {
+      id: crypto.randomUUID(),
+      user_name: name,
+      user_color: userColor,
+      selected_mood: selectedMood,
+      session_id: sessionId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setOptimisticSelections([...moodSelections, optimisticSelection]);
+
+    // Insert into Supabase in background
+    try {
+      const { error } = await supabase.from('mood_selections').insert({
+        user_name: name,
+        user_color: userColor,
+        selected_mood: selectedMood,
+        session_id: sessionId,
+      });
+
+      if (error) {
+        console.error('Error inserting mood selection:', error);
+      }
+    } catch (err) {
+      console.error('Error saving mood selection:', err);
+    }
+  };
+
+  const updateMood = async (mood: string) => {
+    if (!userSession) return;
+
+    // Optimistic update - update UI immediately
+    const updatedSelections = moodSelections.map((selection) =>
+      selection.session_id === userSession.sessionId
+        ? { ...selection, selected_mood: mood, updated_at: new Date().toISOString() }
+        : selection
+    );
+    setOptimisticSelections(updatedSelections);
+
+    try {
+      // Find existing record for this session
+      const { data: existing } = await supabase
+        .from('mood_selections')
+        .select('id')
+        .eq('session_id', userSession.sessionId)
+        .single();
+
+      if (existing) {
+        // Update existing record in background
+        const { error } = await supabase
+          .from('mood_selections')
+          .update({
+            selected_mood: mood,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+
+        if (error) {
+          console.error('Error updating mood:', error);
+          // Revert optimistic update on error
+          setOptimisticSelections([]);
+        }
+      } else {
+        // Insert new record (shouldn't happen but handle it)
+        const { error } = await supabase.from('mood_selections').insert({
+          user_name: userSession.userName,
+          user_color: userSession.userColor,
+          selected_mood: mood,
+          session_id: userSession.sessionId,
+        });
+
+        if (error) {
+          console.error('Error inserting mood:', error);
+          // Revert optimistic update on error
+          setOptimisticSelections([]);
+        }
+      }
+    } catch (err) {
+      console.error('Error updating mood:', err);
+      // Revert optimistic update on error
+      setOptimisticSelections([]);
+    }
+  };
+
+  const handleResetSession = () => {
+    if (!userSession) return;
+
+    // Delete from database
+    supabase
+      .from('mood_selections')
+      .delete()
+      .eq('session_id', userSession.sessionId)
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error deleting mood selection:', error);
+        }
+      });
+
+    // Clear localStorage
+    localStorage.removeItem(STORAGE_KEY);
+    setUserSession(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50">
+        <div className="text-center">
+          <div className="relative">
+            <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-gray-900 mx-auto mb-6"></div>
+            <div className="absolute inset-0 animate-pulse flex items-center justify-center text-2xl">
+              🎭
+            </div>
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading MoodMeter...</h2>
+          <p className="text-gray-600 text-sm">Getting ready to share moods</p>
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50">
+        <div className="text-center max-w-md bg-white rounded-2xl shadow-lg p-8">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Error</h2>
+          <p className="text-red-600 mb-4 text-sm">{error}</p>
+          <p className="text-gray-600 text-sm mb-6">
+            Please make sure the database is set up correctly and real-time is enabled.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50">
+      {/* Header */}
+      <header className="bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200/50 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-1.5 sm:py-2">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
+                MoodMeter
+              </h1>
+              <p className="text-[0.55rem] sm:text-[0.65rem] text-gray-600 mt-0.5">
+                Share your mood in real-time
+              </p>
+            </div>
+            {userSession && (
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <div className="flex items-center gap-1 bg-white rounded-full pl-0.5 pr-2 py-0.5 shadow-sm">
+                  <div
+                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-white shadow-md"
+                    style={{ backgroundColor: userSession.userColor }}
+                  />
+                  <span className="font-semibold text-[0.65rem] sm:text-xs hidden sm:inline">{userSession.userName}</span>
+                </div>
+                <button
+                  onClick={handleResetSession}
+                  className="text-[0.55rem] sm:text-[0.65rem] text-gray-600 hover:text-gray-900 hover:underline transition-all"
+                >
+                  Reset
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 flex items-center justify-center py-2 sm:py-3">
+        <MoodGrid
+          moodSelections={displayedSelections}
+          onMoodClick={handleMoodClick}
+        />
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+
+      {/* User List at Bottom */}
+      <footer className="flex-shrink-0">
+        <UserList moodSelections={displayedSelections} />
       </footer>
+
+      {/* Modal for Name Input */}
+      <UserNameModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleNameSubmit}
+        selectedMood={selectedMood}
+      />
     </div>
   );
 }
