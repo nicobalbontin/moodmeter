@@ -27,7 +27,7 @@ A beautiful, real-time mood sharing application for teams during online meetings
 
 1. **Clone the repository:**
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/nbalbontine/moodmeter.git
    cd moodmeter
    ```
 
@@ -145,7 +145,7 @@ mood_selections (
 3. Add environment variables in Vercel dashboard
 4. Deploy!
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/moodmeter)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/nbalbontine/moodmeter)
 
 ## 🤝 Contributing
 
