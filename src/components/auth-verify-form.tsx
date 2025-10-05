@@ -122,6 +122,7 @@ export function AuthVerifyForm({
         email,
         options: {
           shouldCreateUser: true,
+          // Don't use emailRedirectTo for OTP flow - it causes magic link emails instead of OTP codes
         },
       })
 

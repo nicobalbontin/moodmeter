@@ -34,7 +34,7 @@ export function AuthEmailForm({
         email,
         options: {
           shouldCreateUser: true,
-          emailRedirectTo: `${window.location.origin}/auth/verify`,
+          // Don't use emailRedirectTo for OTP flow - it causes magic link emails instead of OTP codes
         },
       })
 
