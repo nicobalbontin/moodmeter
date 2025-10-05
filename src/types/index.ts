@@ -1,5 +1,15 @@
+export interface UserProfile {
+  id: string;
+  email: string;
+  display_name: string;
+  avatar_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MoodSelection {
   id: string;
+  user_id: string;
   user_name: string;
   user_color: string;
   selected_mood: string;
