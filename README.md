@@ -166,3 +166,4 @@ MIT License - feel free to use this project for your team!
 ---
 
 **Made with ❤️ for better team communication**
+# Environment variables updated for Vercel deployment
